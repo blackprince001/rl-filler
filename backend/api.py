@@ -15,18 +15,28 @@ from backend.core_game import FloodItGame
 app = FastAPI()
 
 
-# Load Model once on startup
+device = "cuda" if torch.cuda.is_available() else "cpu"
+if device == "cpu":
+  print(
+    "Warning: CUDA not available, using CPU for inference. Inference will be slower."
+  )
+else:
+  print(f"Using device: {device} ({torch.cuda.get_device_name(0)}) for inference")
+
+
 model_path = os.path.join(os.path.dirname(__file__), "models", "floodit_dqn")
 if os.path.exists(model_path + ".zip"):
-  model = DQN.load(model_path)
-  print(f"Model loaded from {model_path}")
+  model = DQN.load(model_path, device=device)
+
+  if hasattr(model.policy, "q_net"):
+    model.policy.q_net = model.policy.q_net.to(device)
+  print(f"Model loaded from {model_path} on {device}")
 else:
   print(f"Warning: Model not found at {model_path}. Please train the model first.")
   model = None
 
 
 def preprocess_board(board):
-  # Convert pure 2D array to One-Hot 3D array for the AI
   obs = np.zeros((8, 7, 6), dtype=np.uint8)
   for r in range(8):
     for c in range(7):
@@ -84,10 +94,28 @@ async def game_endpoint(websocket: WebSocket):
     while True:
       data = await websocket.receive_json()
 
+      if data["type"] == "RESET":
+        # Reset the game to start a new one
+        game.reset()
+        p1_score, p2_score = game.get_score()
+        p1_mask, p2_mask = game.get_territory_masks()
+        await websocket.send_json(
+          {
+            "type": "INIT",
+            "board": game.board.tolist(),
+            "scores": [int(p1_score), int(p2_score)],
+            "p1_territory": p1_mask.tolist(),
+            "p2_territory": p2_mask.tolist(),
+            "last_p1_move": game.last_p1_move,
+            "last_p2_move": game.last_p2_move,
+          }
+        )
+        continue
+
       if data["type"] == "MOVE":
         user_color = data["color"]
 
-        # 1. Apply User Move (Player 1)
+        # Apply User Move (Player 1)
         game.play_move(user_color, is_player_1=True)
 
         # Check Win
@@ -105,17 +133,17 @@ async def game_endpoint(websocket: WebSocket):
           )
           continue
 
-        # 2. AI Turn (Player 2 - AI Logic)
+        # AI Turn (Player 2 - AI Logic)
         # The model was trained as P1 (top-left), but here it plays as P2 (bottom-right).
         # We flip the board perspective so the model sees it from its training perspective.
         ai_decision_info = None
         if model is not None:
-          # Flip board for P2 perspective
           flipped_board = flip_board_for_p2(game.board)
           obs = preprocess_board(flipped_board)
 
           # Get Q-values for all actions to show decision-making
           obs_tensor = model.policy.obs_to_tensor(obs)[0]
+          obs_tensor = obs_tensor.to(device)
           model.policy.q_net.eval()
           with torch.no_grad():
             q_values = model.policy.q_net(obs_tensor).cpu().numpy()[0]
@@ -184,7 +212,7 @@ async def game_endpoint(websocket: WebSocket):
               game.play_move(ai_color, is_player_1=False)
               break
 
-        # 3. Check if game is over after AI move
+        # Check if game is over after AI move
         if game.is_game_over():
           p1_score, p2_score = game.get_score()
           p1_mask, p2_mask = game.get_territory_masks()
@@ -199,7 +227,7 @@ async def game_endpoint(websocket: WebSocket):
           )
           continue
 
-        # 4. Send update back if game continues
+        # Send update back if game continues
         p1_score, p2_score = game.get_score()
         p1_mask, p2_mask = game.get_territory_masks()
         await websocket.send_json(
