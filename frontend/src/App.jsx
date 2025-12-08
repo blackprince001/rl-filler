@@ -36,7 +36,7 @@ function App() {
 
     ws.current.onmessage = (event) => {
       const msg = JSON.parse(event.data);
-      if (msg.type === "INIT" || msg.type === "UPDATE") {
+      if (msg.type === "UPDATE") {
         setBoard(msg.board);
         setScores(msg.scores);
         setP1Territory(msg.p1_territory || []);
@@ -62,14 +62,27 @@ function App() {
         setP1Territory(msg.p1_territory || []);
         setP2Territory(msg.p2_territory || []);
         setGameOver(true);
-        
+
         // Determine winner
-        const winner = msg.scores[0] > msg.scores[1] 
-          ? "You Win!" 
-          : msg.scores[0] < msg.scores[1] 
-          ? "AI Wins!" 
-          : "It's a Tie!";
+        const winner = msg.scores[0] > msg.scores[1]
+          ? "You Win!"
+          : msg.scores[0] < msg.scores[1]
+            ? "AI Wins!"
+            : "It's a Tie!";
         setStatus(`Game Over! ${winner} (${msg.scores[0]} - ${msg.scores[1]})`);
+      }
+      if (msg.type === "INIT") {
+        // Reset all state when receiving INIT (for new game)
+        setBoard(msg.board);
+        setScores(msg.scores);
+        setP1Territory(msg.p1_territory || []);
+        setP2Territory(msg.p2_territory || []);
+        setLastP1Move(msg.last_p1_move);
+        setLastP2Move(msg.last_p2_move);
+        setAiMoveLog([]); // Clear AI move log
+        setAiLogExpanded(false); // Collapse log
+        setGameOver(false);
+        setStatus("Your Turn");
       }
     };
 
@@ -87,6 +100,12 @@ function App() {
 
     setStatus("AI Thinking...");
     ws.current.send(JSON.stringify({ type: "MOVE", color: colorIndex }));
+  };
+
+  const handleReset = () => {
+    if (!ws.current || ws.current.readyState !== WebSocket.OPEN) return;
+    ws.current.send(JSON.stringify({ type: "RESET" }));
+    setStatus("Starting new game...");
   };
 
   const isColorDisabled = (colorIndex) => {
@@ -120,6 +139,15 @@ function App() {
           <span>AI: {scores[1]}</span>
         </div>
         <div className={`status ${gameOver ? 'game-over' : ''}`}>{status}</div>
+
+        {board.length > 0 && (
+          <button
+            className="new-game-btn"
+            onClick={handleReset}
+          >
+            Play Next Game
+          </button>
+        )}
 
         <div className={board && board.length > 0 ? "board" : "board board-loading"}>
           {board && board.length > 0 ? (
@@ -159,7 +187,7 @@ function App() {
 
         {aiMoveLog.length > 0 && (
           <div className="ai-log">
-            <div 
+            <div
               className="ai-log-header"
               onClick={() => setAiLogExpanded(!aiLogExpanded)}
             >
