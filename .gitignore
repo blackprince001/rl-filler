@@ -12,3 +12,6 @@ wheels/
 
 node_modules
 
+wandb
+
+logs
