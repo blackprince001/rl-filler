@@ -18,7 +18,7 @@ class FloodItGame:
       self.board[-1, -1] = (self.board[-1, -1] + 1) % self.n_colors
     self.last_p1_move = None
     self.last_p2_move = None
-    
+
     return self.board
 
   def _generate_scattered_board(self):
@@ -151,6 +151,63 @@ class FloodItGame:
     p2_mask = self.get_owner_mask(self.width - 1, self.height - 1)
     return np.sum(p1_mask), np.sum(p2_mask)
 
+  def test_move_score(self, color, is_player_1=True):
+    """
+    Test a move and return the score gain without modifying the game state.
+    This is more efficient than deep copying the entire game.
+    Returns: (new_p1_score, new_p2_score) or None if move is invalid
+    """
+    start_x, start_y = (0, 0) if is_player_1 else (self.width - 1, self.height - 1)
+    current_color = self.board[start_y, start_x]
+
+    if color == current_color:
+      return None  # Invalid move
+
+    # Check if trying to pick opponent's last move
+    opponent_last_move = self.last_p2_move if is_player_1 else self.last_p1_move
+    if opponent_last_move is not None and color == opponent_last_move:
+      return None  # Invalid move
+
+    # Create a temporary board copy (much cheaper than deep copying entire game)
+    temp_board = self.board.copy()
+
+    # Apply the move on the temp board
+    mask = self.get_owner_mask(start_x, start_y)
+    temp_board[mask] = color
+
+    # Calculate new scores
+    # We need to recalculate masks on the temp board
+    temp_p1_mask = np.zeros_like(temp_board, dtype=bool)
+    temp_p2_mask = np.zeros_like(temp_board, dtype=bool)
+
+    # P1 territory
+    stack = [(0, 0)]
+    p1_color = temp_board[0, 0]
+    temp_p1_mask[0, 0] = True
+    while stack:
+      x, y = stack.pop()
+      for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+        nx, ny = x + dx, y + dy
+        if 0 <= nx < self.width and 0 <= ny < self.height:
+          if not temp_p1_mask[ny, nx] and temp_board[ny, nx] == p1_color:
+            temp_p1_mask[ny, nx] = True
+            stack.append((nx, ny))
+
+    # P2 territory
+    stack = [(self.width - 1, self.height - 1)]
+    p2_color = temp_board[self.height - 1, self.width - 1]
+    temp_p2_mask[self.height - 1, self.width - 1] = True
+    while stack:
+      x, y = stack.pop()
+      for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+        nx, ny = x + dx, y + dy
+        if 0 <= nx < self.width and 0 <= ny < self.height:
+          if not temp_p2_mask[ny, nx] and temp_board[ny, nx] == p2_color:
+            temp_p2_mask[ny, nx] = True
+            stack.append((nx, ny))
+
+    return np.sum(temp_p1_mask), np.sum(temp_p2_mask)
+
   def is_game_over(self):
     p1, p2 = self.get_score()
     return (p1 + p2) >= (self.width * self.height)
@@ -160,3 +217,69 @@ class FloodItGame:
     p1_mask = self.get_owner_mask(0, 0)
     p2_mask = self.get_owner_mask(self.width - 1, self.height - 1)
     return p1_mask, p2_mask
+
+  def get_unowned_tiles(self):
+    """Returns a mask of tiles that are not owned by either player"""
+    p1_mask, p2_mask = self.get_territory_masks()
+    return ~(p1_mask | p2_mask)
+
+  def would_move_end_game(self, color, is_player_1=True):
+    """Check if playing this color would end the game"""
+    # Use test_move_score for efficiency instead of deepcopy
+    result = self.test_move_score(color, is_player_1)
+    if result is None:
+      return False
+
+    new_p1_score, new_p2_score = result
+    total_tiles = self.width * self.height
+    return (new_p1_score + new_p2_score) >= total_tiles
+
+  def is_forced_end_state(self, is_player_1=True):
+    """
+    Check if the game is in a forced end state where:
+    1. Any valid move would end the game, OR
+    2. There are only small isolated clusters left that can't change the outcome
+    """
+    p1_score, p2_score = self.get_score()
+    total_tiles = self.width * self.height
+    owned_tiles = p1_score + p2_score
+    unowned_count = total_tiles - owned_tiles
+
+    # If very few tiles left, check if any move would end it
+    if unowned_count <= 3:  # Threshold for "almost done"
+      valid_actions = []
+      current_color = (
+        self.board[0, 0] if is_player_1 else self.board[self.height - 1, self.width - 1]
+      )
+      opponent_last_move = self.last_p2_move if is_player_1 else self.last_p1_move
+
+      for action in range(6):
+        if action == current_color:
+          continue
+        if opponent_last_move is not None and action == opponent_last_move:
+          continue
+        valid_actions.append(action)
+
+      # Check if all valid moves would end the game
+      if valid_actions:
+        all_moves_end_game = True
+        for action in valid_actions:
+          if not self.would_move_end_game(action, is_player_1):
+            all_moves_end_game = False
+            break
+
+        if all_moves_end_game:
+          return True
+
+    # Check if there are only isolated small clusters left that won't change outcome
+    # If the score difference is large and remaining tiles are small, force end
+    score_diff = p1_score - p2_score if is_player_1 else p2_score - p1_score
+    if unowned_count > 0 and score_diff < -unowned_count:
+      # AI is losing by more than the remaining tiles, so can't win
+      # Check if remaining clusters are small and isolated
+      unowned_mask = self.get_unowned_tiles()
+      remaining_tiles = np.sum(unowned_mask)
+      if remaining_tiles <= 5:  # Only a few tiles left
+        return True
+
+    return False
