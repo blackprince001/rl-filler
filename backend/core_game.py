@@ -12,14 +12,93 @@ class FloodItGame:
     self.reset()
 
   def reset(self):
-    # Generate random board
-    self.board = np.random.randint(0, self.n_colors, (self.height, self.width))
-    # Ensure corners are different
+    self.board = self._generate_scattered_board()
+
     while self.board[0, 0] == self.board[-1, -1]:
       self.board[-1, -1] = (self.board[-1, -1] + 1) % self.n_colors
     self.last_p1_move = None
     self.last_p2_move = None
+    
     return self.board
+
+  def _generate_scattered_board(self):
+    """
+    Generates a board with small, scattered clusters to limit tile gains per move.
+    Maximum gain per move should be around 3-4 tiles for strategic gameplay.
+    """
+    board = np.zeros((self.height, self.width), dtype=int)
+
+    # Start with random distribution
+    board = np.random.randint(0, self.n_colors, (self.height, self.width))
+
+    for _ in range(1):
+      new_board = board.copy()
+      for y in range(self.height):
+        for x in range(self.width):
+          neighbor_colors = []
+          for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            ny, nx = y + dy, x + dx
+            if 0 <= ny < self.height and 0 <= nx < self.width:
+              neighbor_colors.append(board[ny, nx])
+
+          if neighbor_colors:
+            color_counts = np.bincount(neighbor_colors, minlength=self.n_colors)
+            most_common = np.argmax(color_counts)
+
+            # LOW chance (30%) to match - keeps clusters small
+            if np.random.random() < 0.3:
+              new_board[y, x] = most_common
+      board = new_board
+
+    # Break up any large regions that might have formed
+    visited = np.zeros((self.height, self.width), dtype=bool)
+    max_cluster_size = 3  # Maximum 3 tiles per cluster (2-3 tiles per move)
+
+    for y in range(self.height):
+      for x in range(self.width):
+        if not visited[y, x]:
+          # Flood fill to find cluster size
+          region_color = board[y, x]
+          region_size = 0
+          stack = [(x, y)]
+          region_cells = []
+
+          while stack:
+            cx, cy = stack.pop()
+            if visited[cy, cx] or board[cy, cx] != region_color:
+              continue
+            visited[cy, cx] = True
+            region_size += 1
+            region_cells.append((cx, cy))
+
+            for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+              nx, ny = cx + dx, cy + dy
+              if 0 <= nx < self.width and 0 <= ny < self.height:
+                if not visited[ny, nx] and board[ny, nx] == region_color:
+                  stack.append((nx, ny))
+
+          # If cluster is too large, break it up
+          if region_size > max_cluster_size:
+            # Change excess cells to different colors
+            cells_to_change = region_size - max_cluster_size
+            np.random.shuffle(region_cells)
+            for cx, cy in region_cells[:cells_to_change]:
+              # Change to a different color
+              new_color = (
+                region_color + np.random.randint(1, self.n_colors)
+              ) % self.n_colors
+              board[cy, cx] = new_color
+
+    # Final pass: ensure colors are well distributed and scattered
+    # Add some randomness to break up any remaining patterns
+    for _ in range(2):
+      for y in range(self.height):
+        for x in range(self.width):
+          # 10% chance to randomize a cell to add variety
+          if np.random.random() < 0.1:
+            board[y, x] = np.random.randint(0, self.n_colors)
+
+    return board
 
   def get_owner_mask(self, start_x, start_y):
     """Returns a boolean mask of tiles owned by the player at start_x, start_y"""
