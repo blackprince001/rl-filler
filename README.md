@@ -2,6 +2,9 @@
 
 A competitive Flood-It game where you play against an AI trained using Deep Q-Network (DQN) from Stable Baselines3.
 
+<img width="1596" height="927" alt="screenshot" src="https://github.com/user-attachments/assets/60747647-e15a-4008-b673-677178fa8185" />
+
+
 ## Setup Instructions
 
 ### Prerequisites
