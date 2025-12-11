@@ -187,7 +187,7 @@ def main():
       buffer_size=1_000_000,
       learning_starts=500,
       batch_size=64,
-      gamma=0.99,
+      gamma=0.42,
       target_update_interval=500,
       train_freq=(4, "step"),
       gradient_steps=1,
