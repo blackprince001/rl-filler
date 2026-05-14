@@ -22,7 +22,11 @@ COPY backend ./backend
 COPY main.py ./
 RUN uv sync --frozen --no-dev
 
-ENV PORT=8000
+# Telemetry DB defaults to /data so a mounted Railway volume persists it
+# across deploys (override with RL_FILLER_DB to relocate).
+RUN mkdir -p /data
+ENV PORT=8000 \
+    RL_FILLER_DB=/data/telemetry.db
 EXPOSE 8000
 
 CMD ["sh", "-c", "uv run uvicorn backend.api:app --host 0.0.0.0 --port ${PORT}"]
