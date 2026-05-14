@@ -7,7 +7,7 @@ import ThemeToggle from "../components/ThemeToggle";
 import NavLink from "../components/NavLink";
 import { COLORS } from "../lib/colors";
 import { WS_URL } from "../lib/config";
-import { saveMatch, newMatchId } from "../lib/storage";
+import { navigate } from "../lib/router";
 
 export default function PlayPage() {
   const [board, setBoard] = useState([]);
@@ -19,39 +19,11 @@ export default function PlayPage() {
   const [lastAiMove, setLastAiMove] = useState(null);
   const [aiMoveLog, setAiMoveLog] = useState([]);
   const [gameOver, setGameOver] = useState(false);
+  const [gameId, setGameId] = useState(null);
 
   const ws = useRef(null);
-  const matchRef = useRef(null);
   const reconnectTimer = useRef(null);
-
-  function startMatch(initialBoard) {
-    matchRef.current = {
-      id: newMatchId(),
-      started_at: Date.now(),
-      initial_board: initialBoard,
-      moves: [],
-    };
-  }
-
-  function recordMove(move) {
-    if (!matchRef.current) return;
-    matchRef.current.moves.push(move);
-  }
-
-  function finalizeMatch(finalScores, finalBoard) {
-    if (!matchRef.current) return;
-    const [h, a] = finalScores;
-    const winner = h > a ? "human" : h < a ? "ai" : "tie";
-    saveMatch({
-      ...matchRef.current,
-      ended_at: Date.now(),
-      final_scores: finalScores,
-      final_board: finalBoard,
-      winner,
-      turns: matchRef.current.moves.length,
-    });
-    matchRef.current = null;
-  }
+  const aiTurnRef = useRef(0);
 
   useEffect(() => {
     function connect() {
@@ -76,7 +48,8 @@ export default function PlayPage() {
           setAiMoveLog([]);
           setGameOver(false);
           setStatus("your turn");
-          startMatch(msg.board);
+          setGameId(msg.game_id || null);
+          aiTurnRef.current = 0;
         } else if (msg.type === "UPDATE") {
           setBoard(msg.board);
           setScores(msg.scores);
@@ -84,18 +57,12 @@ export default function PlayPage() {
           setAiTerritory(msg.ai_territory || []);
           setLastAiMove(msg.last_ai_move);
           if (msg.ai_decision) {
-            const turn = (matchRef.current?.moves.filter((m) => m.by === "ai").length || 0) + 1;
+            aiTurnRef.current += 1;
+            const turn = aiTurnRef.current;
             setAiMoveLog((prev) => [
               ...prev,
               { move: msg.ai_decision.chosen_action, qValues: msg.ai_decision.q_values, turn },
             ]);
-            recordMove({
-              by: "ai",
-              color: msg.ai_decision.chosen_action,
-              q_values: msg.ai_decision.q_values,
-              scores_after: msg.scores,
-              board_after: msg.board,
-            });
           }
           setStatus("your turn");
           setGameOver(false);
@@ -105,10 +72,10 @@ export default function PlayPage() {
           setYouTerritory(msg.you_territory || []);
           setAiTerritory(msg.ai_territory || []);
           setGameOver(true);
+          if (msg.game_id) setGameId(msg.game_id);
           const [h, a] = msg.scores;
           const w = h > a ? "you win" : h < a ? "ai wins" : "tie";
           setStatus(`game over · ${w} · ${h}–${a}`);
-          finalizeMatch(msg.scores, msg.board);
         }
       };
     }
@@ -134,14 +101,12 @@ export default function PlayPage() {
   function handleMove(colorIndex) {
     if (!ws.current || ws.current.readyState !== WebSocket.OPEN) return;
     if (gameOver || isColorDisabled(colorIndex)) return;
-    recordMove({ by: "human", color: colorIndex, scores_after: scores, board_after: board });
     setStatus("ai thinking…");
     ws.current.send(JSON.stringify({ type: "MOVE", color: colorIndex }));
   }
 
   function handleReset() {
     if (!ws.current || ws.current.readyState !== WebSocket.OPEN) return;
-    matchRef.current = null;
     ws.current.send(JSON.stringify({ type: "RESET" }));
     setStatus("starting…");
   }
@@ -243,7 +208,8 @@ export default function PlayPage() {
                 {winnerLine}
               </span>
               <span className="text-muted dark:text-dark-muted">you {scores[0]} · ai {scores[1]}</span>
-              <NavLink to="/history">replays →</NavLink>
+              {gameId && <NavLink to={`/replay?id=${gameId}&scope=mine`}>replay this →</NavLink>}
+              <NavLink to="/history">history →</NavLink>
             </div>
           )}
 

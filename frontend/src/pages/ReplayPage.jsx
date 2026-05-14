@@ -6,6 +6,8 @@ import Footer from "../components/Footer";
 import ThemeToggle from "../components/ThemeToggle";
 import NavLink from "../components/NavLink";
 import Select from "../components/Select";
+import { COLORS } from "../lib/colors";
+import { fetchGame } from "../lib/api";
 
 const SPEED_OPTIONS = [
   { value: "1500", label: "0.5×" },
@@ -14,47 +16,40 @@ const SPEED_OPTIONS = [
   { value: "400", label: "1.75×" },
   { value: "200", label: "3×" },
 ];
-import { COLORS } from "../lib/colors";
-import { getMatch } from "../lib/storage";
 
-function buildFrames(match) {
-  const frames = [{ board: match.initial_board, scores: [0, 0], move: null, moveIndex: -1 }];
-  match.moves.forEach((m, i) => {
+function buildFrames(game) {
+  const frames = [{ board: game.initial_board, scores: [0, 0], move: null }];
+  game.moves.forEach((m) => {
     frames.push({
       board: m.board_after,
-      scores: m.scores_after || [0, 0],
+      scores: [m.score_you_after, m.score_ai_after],
       move: m,
-      moveIndex: i,
     });
   });
   return frames;
 }
 
-export default function ReplayPage({ matchId }) {
-  const match = useMemo(() => (matchId ? getMatch(matchId) : null), [matchId]);
-  const frames = useMemo(() => (match ? buildFrames(match) : []), [match]);
+export default function ReplayPage({ matchId, scope }) {
+  const [game, setGame] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [idx, setIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(700);
   const timer = useRef(null);
 
-  // AI-move entries visible up to and including the current frame.
-  const aiEntriesUpToNow = useMemo(() => {
-    if (!match) return [];
-    const entries = [];
-    let aiTurn = 0;
-    for (let i = 0; i < idx; i++) {
-      const m = match.moves[i];
-      if (!m) continue;
-      if (m.by === "ai" && Array.isArray(m.q_values)) {
-        aiTurn += 1;
-        entries.push({ move: m.color, qValues: m.q_values, turn: aiTurn });
-      } else if (m.by === "ai") {
-        aiTurn += 1;
-      }
-    }
-    return entries;
-  }, [match, idx]);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setGame(null);
+    setIdx(0);
+    if (!matchId) { setLoading(false); return; }
+    fetchGame(matchId, { scope })
+      .then((g) => { if (!cancelled) { setGame(g); setLoading(false); } })
+      .catch(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [matchId, scope]);
+
+  const frames = useMemo(() => (game ? buildFrames(game) : []), [game]);
 
   useEffect(() => {
     if (!playing) return;
@@ -63,17 +58,48 @@ export default function ReplayPage({ matchId }) {
     return () => clearTimeout(timer.current);
   }, [playing, idx, speed, frames.length]);
 
-  if (!matchId || !match) {
+  const aiEntriesUpToNow = useMemo(() => {
+    if (!game) return [];
+    const entries = [];
+    let aiTurn = 0;
+    for (let i = 0; i < idx; i++) {
+      const m = game.moves[i];
+      if (!m) continue;
+      if (m.side === "ai" && Array.isArray(m.q_values)) {
+        aiTurn += 1;
+        entries.push({ move: m.color, qValues: m.q_values, turn: aiTurn });
+      } else if (m.side === "ai") {
+        aiTurn += 1;
+      }
+    }
+    return entries;
+  }, [game, idx]);
+
+  if (loading) {
     return (
       <div className="min-h-screen bg-white text-ink dark:bg-dark-bg dark:text-dark-ink">
         <PageHeader
-          left={<NavLink to="/history">← history</NavLink>}
+          left={<NavLink to={`/history?scope=${scope}`}>← history</NavLink>}
+          right={<><NavLink to="/play">play</NavLink><ThemeToggle /></>}
+        >
+          Replay
+        </PageHeader>
+        <main className="mx-auto max-w-3xl px-6 pt-20 text-center font-mono text-xs text-muted dark:text-dark-muted">loading…</main>
+      </div>
+    );
+  }
+
+  if (!matchId || !game) {
+    return (
+      <div className="min-h-screen bg-white text-ink dark:bg-dark-bg dark:text-dark-ink">
+        <PageHeader
+          left={<NavLink to={`/history?scope=${scope}`}>← history</NavLink>}
           right={<><NavLink to="/play">play</NavLink><ThemeToggle /></>}
         >
           Replay
         </PageHeader>
         <main className="mx-auto max-w-3xl px-6 pt-20 text-center font-mono text-sm text-muted dark:text-dark-muted">
-          {!matchId ? "No match selected." : "Match not found — it may have been deleted."}
+          {!matchId ? "No match selected." : "Match not found."}
         </main>
       </div>
     );
@@ -81,18 +107,18 @@ export default function ReplayPage({ matchId }) {
 
   const frame = frames[idx];
   const move = frame.move;
-  const [h, a] = match.final_scores || [0, 0];
+  const [h, a] = game.final_scores || [0, 0];
   const winnerTone =
-    match.winner === "human" ? "var(--you-stroke)" :
-    match.winner === "ai"    ? "var(--ai-stroke)" : undefined;
+    game.winner === "human" ? "var(--you-stroke)" :
+    game.winner === "ai"    ? "var(--ai-stroke)" : undefined;
   const winnerText =
-    match.winner === "human" ? "you won" :
-    match.winner === "ai"    ? "you lost" : "tie";
+    game.winner === "human" ? "you won" :
+    game.winner === "ai"    ? "you lost" : "tie";
 
   return (
     <div className="flex min-h-screen flex-col bg-white text-ink dark:bg-dark-bg dark:text-dark-ink">
       <PageHeader
-        left={<NavLink to="/history">← history</NavLink>}
+        left={<NavLink to={`/history?scope=${scope}`}>← history</NavLink>}
         right={<><NavLink to="/play">play</NavLink><ThemeToggle /></>}
       >
         Replay
@@ -100,7 +126,7 @@ export default function ReplayPage({ matchId }) {
 
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col items-center gap-5 px-4 pb-12 sm:px-6">
         <div className="flex flex-wrap items-center justify-center gap-4 font-mono text-[11px]">
-          <span className="text-muted dark:text-dark-muted">{match.turns} turns</span>
+          <span className="text-muted dark:text-dark-muted">{game.plies} turns</span>
           <span className="text-muted dark:text-dark-muted">final {h}–{a}</span>
           <span style={{ color: winnerTone }}>{winnerText}</span>
         </div>
@@ -148,14 +174,14 @@ export default function ReplayPage({ matchId }) {
             <>
               <span className="text-muted dark:text-dark-muted">ply {idx} / {frames.length - 1}</span>
               <span className="opacity-50">·</span>
-              <span style={{ color: move.by === "human" ? "var(--you-stroke)" : "var(--ai-stroke)" }}>
-                {move.by === "human" ? "you" : "ai"} played
+              <span style={{ color: move.side === "you" ? "var(--you-stroke)" : "var(--ai-stroke)" }}>
+                {move.side === "you" ? "you" : "ai"} played
               </span>
               <span
                 className="inline-block h-4 w-4 rounded border border-line dark:border-dark-line"
                 style={{ backgroundColor: COLORS[move.color] }}
               />
-              {move.by === "ai" && move.q_values && (
+              {move.side === "ai" && move.q_values && (
                 <span className="tabular-nums text-muted dark:text-dark-muted">
                   · Q {move.q_values[move.color].toFixed(2)}
                 </span>
