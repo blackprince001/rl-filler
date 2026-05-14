@@ -4,6 +4,7 @@ import AILog from "../components/AILog";
 import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
 import ThemeToggle from "../components/ThemeToggle";
+import MuteToggle from "../components/MuteToggle";
 import NavLink from "../components/NavLink";
 import Select from "../components/Select";
 import { COLORS } from "../lib/colors";
@@ -80,7 +81,7 @@ export default function ReplayPage({ matchId, scope }) {
       <div className="min-h-screen bg-white text-ink dark:bg-dark-bg dark:text-dark-ink">
         <PageHeader
           left={<NavLink to={`/history?scope=${scope}`}>← history</NavLink>}
-          right={<><NavLink to="/play">play</NavLink><ThemeToggle /></>}
+          right={<><NavLink to="/play">play</NavLink><MuteToggle /><ThemeToggle /></>}
         >
           Replay
         </PageHeader>
@@ -94,7 +95,7 @@ export default function ReplayPage({ matchId, scope }) {
       <div className="min-h-screen bg-white text-ink dark:bg-dark-bg dark:text-dark-ink">
         <PageHeader
           left={<NavLink to={`/history?scope=${scope}`}>← history</NavLink>}
-          right={<><NavLink to="/play">play</NavLink><ThemeToggle /></>}
+          right={<><NavLink to="/play">play</NavLink><MuteToggle /><ThemeToggle /></>}
         >
           Replay
         </PageHeader>
@@ -119,7 +120,7 @@ export default function ReplayPage({ matchId, scope }) {
     <div className="flex min-h-screen flex-col bg-white text-ink dark:bg-dark-bg dark:text-dark-ink">
       <PageHeader
         left={<NavLink to={`/history?scope=${scope}`}>← history</NavLink>}
-        right={<><NavLink to="/play">play</NavLink><ThemeToggle /></>}
+        right={<><NavLink to="/play">play</NavLink><MuteToggle /><ThemeToggle /></>}
       >
         Replay
       </PageHeader>

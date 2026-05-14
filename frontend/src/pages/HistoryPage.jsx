@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
 import ThemeToggle from "../components/ThemeToggle";
+import MuteToggle from "../components/MuteToggle";
 import NavLink from "../components/NavLink";
 import MiniBoard from "../components/MiniBoard";
 import ScopeToggle from "../components/ScopeToggle";
@@ -97,7 +98,7 @@ export default function HistoryPage({ scope }) {
     <div className="min-h-screen bg-white text-ink dark:bg-dark-bg dark:text-dark-ink">
       <PageHeader
         left={<NavLink to="/play">← play</NavLink>}
-        right={<><NavLink to={`/stats?scope=${scope}`}>stats →</NavLink><ThemeToggle /></>}
+        right={<><NavLink to={`/stats?scope=${scope}`}>stats →</NavLink><MuteToggle /><ThemeToggle /></>}
       >
         Game history
       </PageHeader>

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
 import ThemeToggle from "../components/ThemeToggle";
+import MuteToggle from "../components/MuteToggle";
 import NavLink from "../components/NavLink";
 import WinBar from "../components/WinBar";
 import ScopeToggle from "../components/ScopeToggle";
@@ -55,7 +56,7 @@ export default function StatsPage({ scope }) {
     <div className="min-h-screen bg-white text-ink dark:bg-dark-bg dark:text-dark-ink">
       <PageHeader
         left={<NavLink to="/play">← play</NavLink>}
-        right={<><NavLink to={`/history?scope=${scope}`}>history →</NavLink><ThemeToggle /></>}
+        right={<><NavLink to={`/history?scope=${scope}`}>history →</NavLink><MuteToggle /><ThemeToggle /></>}
       >
         Analytics
       </PageHeader>

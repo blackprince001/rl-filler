@@ -4,10 +4,12 @@ import AILog from "../components/AILog";
 import PageHeader from "../components/PageHeader";
 import Footer from "../components/Footer";
 import ThemeToggle from "../components/ThemeToggle";
+import MuteToggle from "../components/MuteToggle";
 import NavLink from "../components/NavLink";
 import { COLORS } from "../lib/colors";
 import { WS_URL } from "../lib/config";
 import { navigate } from "../lib/router";
+import { primeAudio, tick, thock, winChime, loseChime, tieChime } from "../lib/audio";
 
 export default function PlayPage() {
   const [board, setBoard] = useState([]);
@@ -24,6 +26,14 @@ export default function PlayPage() {
   const ws = useRef(null);
   const reconnectTimer = useRef(null);
   const aiTurnRef = useRef(0);
+
+  // Browser autoplay policies require a user gesture before audio plays;
+  // prime the AudioContext on the first pointerdown.
+  useEffect(() => {
+    const handler = () => primeAudio();
+    window.addEventListener("pointerdown", handler, { once: true });
+    return () => window.removeEventListener("pointerdown", handler);
+  }, []);
 
   useEffect(() => {
     function connect() {
@@ -63,6 +73,7 @@ export default function PlayPage() {
               ...prev,
               { move: msg.ai_decision.chosen_action, qValues: msg.ai_decision.q_values, turn },
             ]);
+            thock();
           }
           setStatus("your turn");
           setGameOver(false);
@@ -76,6 +87,9 @@ export default function PlayPage() {
           const [h, a] = msg.scores;
           const w = h > a ? "you win" : h < a ? "ai wins" : "tie";
           setStatus(`game over · ${w} · ${h}–${a}`);
+          if (h > a) winChime();
+          else if (h < a) loseChime();
+          else tieChime();
         }
       };
     }
@@ -101,6 +115,7 @@ export default function PlayPage() {
   function handleMove(colorIndex) {
     if (!ws.current || ws.current.readyState !== WebSocket.OPEN) return;
     if (gameOver || isColorDisabled(colorIndex)) return;
+    tick();
     setStatus("ai thinking…");
     ws.current.send(JSON.stringify({ type: "MOVE", color: colorIndex }));
   }
@@ -123,6 +138,7 @@ export default function PlayPage() {
           <>
             <NavLink to="/history">history →</NavLink>
             <NavLink to="/stats">stats</NavLink>
+            <MuteToggle />
             <ThemeToggle />
           </>
         }
