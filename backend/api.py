@@ -4,6 +4,7 @@ import sys
 import numpy as np
 import torch
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from stable_baselines3 import DQN
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -14,12 +15,24 @@ from backend.core_game import FloodItGame
 
 app = FastAPI()
 
+allowed_origins = os.environ.get("ALLOWED_ORIGINS", "*").split(",")
+app.add_middleware(
+  CORSMiddleware,
+  allow_origins=allowed_origins,
+  allow_credentials=True,
+  allow_methods=["*"],
+  allow_headers=["*"],
+)
+
+
+@app.get("/healthz")
+async def healthz():
+  return {"ok": True, "model_loaded": model is not None}
+
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 if device == "cpu":
-  print(
-    "Warning: CUDA not available, using CPU for inference. Inference will be slower."
-  )
+  print("Warning: CUDA not available, using CPU for inference. Inference will be slower.")
 else:
   print(f"Using device: {device} ({torch.cuda.get_device_name(0)}) for inference")
 
@@ -27,7 +40,6 @@ else:
 model_path = os.path.join(os.path.dirname(__file__), "models", "floodit_dqn")
 if os.path.exists(model_path + ".zip"):
   model = DQN.load(model_path, device=device)
-
   if hasattr(model.policy, "q_net"):
     model.policy.q_net = model.policy.q_net.to(device)
   print(f"Model loaded from {model_path} on {device}")
@@ -43,15 +55,6 @@ def preprocess_board(board):
       color = board[r][c]
       obs[r, c, color] = 1
   return obs
-
-
-def flip_board_for_p2(board):
-  """
-  Flip the board horizontally and vertically so the model trained as P1
-  can play correctly as P2. This transforms the bottom-right corner to top-left.
-  """
-  # Flip both axes: flip vertically then horizontally
-  return np.flip(np.flip(board, axis=0), axis=1)
 
 
 class ConnectionManager:
@@ -70,179 +73,117 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+def build_state(game: FloodItGame, msg_type: str, ai_decision_info=None):
+  """Game state with human-centric naming.
+
+  In the game engine, P1 is top-left and P2 is bottom-right. We assign:
+    - P1 (top-left)     -> AI
+    - P2 (bottom-right) -> human player
+  So the human always plays from the bottom corner.
+  """
+  ai_score, you_score = game.get_score()
+  ai_mask, you_mask = game.get_territory_masks()
+  payload = {
+    "type": msg_type,
+    "board": game.board.tolist(),
+    "scores": [int(you_score), int(ai_score)],
+    "you_territory": you_mask.tolist(),
+    "ai_territory": ai_mask.tolist(),
+    "last_you_move": game.last_p2_move,
+    "last_ai_move": game.last_p1_move,
+  }
+  if ai_decision_info is not None:
+    payload["ai_decision"] = ai_decision_info
+  return payload
+
+
+def pick_ai_move(game: FloodItGame):
+  """Pick AI's move. AI plays as P1 (top-left), matching the trained model."""
+  ai_start_color = int(game.board[0, 0])
+  human_last = game.last_p2_move
+
+  def is_valid(action):
+    if action == ai_start_color:
+      return False
+    if human_last is not None and action == human_last:
+      return False
+    return True
+
+  if model is not None:
+    obs = preprocess_board(game.board)
+    obs_tensor = model.policy.obs_to_tensor(obs)[0].to(device)
+    model.policy.q_net.eval()
+    with torch.no_grad():
+      q_values = model.policy.q_net(obs_tensor).cpu().numpy()[0]
+
+    valid_actions = [a for a in range(6) if is_valid(a)]
+    valid_q = [float(q_values[a]) for a in valid_actions]
+    all_q = [float(q_values[i]) for i in range(6)]
+
+    if valid_actions:
+      best = int(np.argmax(valid_q))
+      ai_color = valid_actions[best]
+    else:
+      ai_color = (ai_start_color + 1) % 6
+
+    decision = {
+      "q_values": all_q,
+      "chosen_action": int(ai_color),
+      "valid_actions": valid_actions,
+      "valid_q_values": valid_q,
+    }
+    return ai_color, decision
+
+  # Fallback random
+  valid = [c for c in range(6) if is_valid(c)]
+  ai_color = int(np.random.choice(valid)) if valid else (ai_start_color + 1) % 6
+  return ai_color, None
+
+
 @app.websocket("/ws/game")
 async def game_endpoint(websocket: WebSocket):
   await manager.connect(websocket)
-  game = FloodItGame()  # New instance per connection
+  game = FloodItGame()
 
   try:
-    # Send initial board
-    p1_score, p2_score = game.get_score()
-    p1_mask, p2_mask = game.get_territory_masks()
-    await websocket.send_json(
-      {
-        "type": "INIT",
-        "board": game.board.tolist(),
-        "scores": [int(p1_score), int(p2_score)],
-        "p1_territory": p1_mask.tolist(),
-        "p2_territory": p2_mask.tolist(),
-        "last_p1_move": game.last_p1_move,
-        "last_p2_move": game.last_p2_move,
-      }
-    )
+    await websocket.send_json(build_state(game, "INIT"))
 
     while True:
       data = await websocket.receive_json()
 
       if data["type"] == "RESET":
-        # Reset the game to start a new one
         game.reset()
-        p1_score, p2_score = game.get_score()
-        p1_mask, p2_mask = game.get_territory_masks()
-        await websocket.send_json(
-          {
-            "type": "INIT",
-            "board": game.board.tolist(),
-            "scores": [int(p1_score), int(p2_score)],
-            "p1_territory": p1_mask.tolist(),
-            "p2_territory": p2_mask.tolist(),
-            "last_p1_move": game.last_p1_move,
-            "last_p2_move": game.last_p2_move,
-          }
-        )
+        await websocket.send_json(build_state(game, "INIT"))
         continue
 
       if data["type"] == "MOVE":
         user_color = data["color"]
+        # Human plays as P2 (bottom-right).
+        game.play_move(user_color, is_player_1=False)
 
-        # Apply User Move (Player 1)
-        game.play_move(user_color, is_player_1=True)
-
-        # Check Win
         if game.is_game_over():
-          p1_score, p2_score = game.get_score()
-          p1_mask, p2_mask = game.get_territory_masks()
-          await websocket.send_json(
-            {
-              "type": "GAME_OVER",
-              "board": game.board.tolist(),
-              "scores": [int(p1_score), int(p2_score)],
-              "p1_territory": p1_mask.tolist(),
-              "p2_territory": p2_mask.tolist(),
-            }
-          )
+          await websocket.send_json(build_state(game, "GAME_OVER"))
           continue
 
-        # AI Turn (Player 2 - AI Logic)
-        # The model was trained as P1 (top-left), but here it plays as P2 (bottom-right).
-        # We flip the board perspective so the model sees it from its training perspective.
-        ai_decision_info = None
-        if model is not None:
-          flipped_board = flip_board_for_p2(game.board)
-          obs = preprocess_board(flipped_board)
-
-          # Get Q-values for all actions to show decision-making
-          obs_tensor = model.policy.obs_to_tensor(obs)[0]
-          obs_tensor = obs_tensor.to(device)
-          model.policy.q_net.eval()
-          with torch.no_grad():
-            q_values = model.policy.q_net(obs_tensor).cpu().numpy()[0]
-
-          # Filter out invalid actions (opponent's last move, current color)
-          ai_start_color = game.board[game.height - 1, game.width - 1]
-          valid_actions = []
-          valid_q_values = []
-
-          for action in range(6):
-            # Skip if same as current color
-            if action == ai_start_color:
-              continue
-            # Skip if same as player's last move
-            if game.last_p1_move is not None and action == game.last_p1_move:
-              continue
-            valid_actions.append(action)
-            valid_q_values.append(float(q_values[action]))
-
-          if valid_actions:
-            # Choose action with highest Q-value
-            best_idx = np.argmax(valid_q_values)
-            ai_color = valid_actions[best_idx]
-
-            # Create decision info for frontend
-            all_q_values = [float(q_values[i]) for i in range(6)]
-            ai_decision_info = {
-              "q_values": all_q_values,
-              "chosen_action": int(ai_color),
-              "valid_actions": valid_actions,
-              "valid_q_values": valid_q_values,
-            }
-          else:
-            # Fallback if no valid actions (shouldn't happen)
-            ai_color = (ai_start_color + 1) % 6
-            all_q_values = [float(q_values[i]) for i in range(6)]
-            ai_decision_info = {
-              "q_values": all_q_values,
-              "chosen_action": int(ai_color),
-              "valid_actions": [],
-              "valid_q_values": [],
-            }
-        else:
-          # Fallback to random if model not loaded
-          ai_start_color = game.board[game.height - 1, game.width - 1]
-          valid_colors = [
-            c
-            for c in range(6)
-            if c != ai_start_color
-            and (game.last_p1_move is None or c != game.last_p1_move)
-          ]
-          if valid_colors:
-            ai_color = np.random.choice(valid_colors)
-          else:
-            ai_color = (ai_start_color + 1) % 6
-
-        move_valid = game.play_move(ai_color, is_player_1=False)
+        # AI plays as P1 (top-left), no perspective flip needed.
+        ai_color, decision = pick_ai_move(game)
+        move_valid = game.play_move(ai_color, is_player_1=True)
         if not move_valid:
-          # Should not happen, but fallback
-          ai_start_color = game.board[game.height - 1, game.width - 1]
+          # Fallback: try any valid color
+          ai_start_color = int(game.board[0, 0])
           for c in range(6):
-            if c != ai_start_color and (
-              game.last_p1_move is None or c != game.last_p1_move
-            ):
+            if c != ai_start_color and (game.last_p2_move is None or c != game.last_p2_move):
+              game.play_move(c, is_player_1=True)
               ai_color = c
-              game.play_move(ai_color, is_player_1=False)
               break
+          if decision is not None:
+            decision["chosen_action"] = int(ai_color)
 
-        # Check if game is over after AI move
         if game.is_game_over():
-          p1_score, p2_score = game.get_score()
-          p1_mask, p2_mask = game.get_territory_masks()
-          await websocket.send_json(
-            {
-              "type": "GAME_OVER",
-              "board": game.board.tolist(),
-              "scores": [int(p1_score), int(p2_score)],
-              "p1_territory": p1_mask.tolist(),
-              "p2_territory": p2_mask.tolist(),
-            }
-          )
+          await websocket.send_json(build_state(game, "GAME_OVER", ai_decision_info=decision))
           continue
 
-        # Send update back if game continues
-        p1_score, p2_score = game.get_score()
-        p1_mask, p2_mask = game.get_territory_masks()
-        await websocket.send_json(
-          {
-            "type": "UPDATE",
-            "board": game.board.tolist(),
-            "scores": [int(p1_score), int(p2_score)],
-            "p1_territory": p1_mask.tolist(),
-            "p2_territory": p2_mask.tolist(),
-            "last_p1_move": game.last_p1_move,
-            "last_p2_move": game.last_p2_move,
-            "last_ai_move": int(ai_color),
-            "ai_decision": ai_decision_info,
-          }
-        )
+        await websocket.send_json(build_state(game, "UPDATE", ai_decision_info=decision))
 
   except WebSocketDisconnect:
     manager.disconnect(websocket)

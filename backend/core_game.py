@@ -13,13 +13,52 @@ class FloodItGame:
 
   def reset(self):
     self.board = self._generate_scattered_board()
-
-    while self.board[0, 0] == self.board[-1, -1]:
-      self.board[-1, -1] = (self.board[-1, -1] + 1) % self.n_colors
+    self._isolate_starting_corners()
     self.last_p1_move = None
     self.last_p2_move = None
-
     return self.board
+
+  def _isolate_starting_corners(self):
+    """Force each starting corner to be a 1-cell cluster so the game opens 1v1.
+
+    Each corner must hold a unique colour, and its in-bounds neighbours must
+    all differ from it. This guarantees get_score() returns (1, 1) before any
+    move has been played.
+    """
+    h, w, n = self.height, self.width, self.n_colors
+    p1 = (0, 0)
+    p2 = (h - 1, w - 1)
+
+    def neighbours(y, x):
+      out = []
+      for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        ny, nx = y + dy, x + dx
+        if 0 <= ny < h and 0 <= nx < w:
+          out.append((ny, nx))
+      return out
+
+    # Make sure the two corners have different colours.
+    if self.board[p1] == self.board[p2]:
+      self.board[p2] = (int(self.board[p2]) + 1) % n
+
+    # Recolour any neighbour matching its corner.
+    for cy, cx in (p1, p2):
+      corner_color = int(self.board[cy, cx])
+      other_corner_color = (
+        int(self.board[p2]) if (cy, cx) == p1 else int(self.board[p1])
+      )
+      for ny, nx in neighbours(cy, cx):
+        if int(self.board[ny, nx]) != corner_color:
+          continue
+        # Pick a colour that isn't this corner's colour (and prefer not to
+        # equal the other corner's colour either — purely cosmetic).
+        for offset in range(1, n):
+          candidate = (corner_color + offset) % n
+          if candidate != corner_color and candidate != other_corner_color:
+            self.board[ny, nx] = candidate
+            break
+        else:
+          self.board[ny, nx] = (corner_color + 1) % n
 
   def _generate_scattered_board(self):
     """
