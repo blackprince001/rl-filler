@@ -11,16 +11,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     PATH=/opt/venv/bin:$PATH
 
-COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.8.10 /uv /usr/local/bin/uv
 
 WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project
+# --no-default-groups skips both `dev` (ruff) and `train` (torch + SB3 + gym
+# + wandb). The image ships only the runtime: fastapi + onnxruntime + numpy.
+RUN uv sync --frozen --no-default-groups --no-install-project
 
 COPY backend ./backend
 COPY main.py ./
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-default-groups
 
 # Telemetry DB defaults to /data so a mounted Railway volume persists it
 # across deploys (override with RL_FILLER_DB to relocate).

@@ -8,14 +8,26 @@ dependencies = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
     "websockets>=12.0",
-    "gymnasium>=0.29.0",
-    "stable-baselines3>=2.1.0",
     "numpy>=1.24.0",
+    "onnxruntime>=1.20.0",
+]
+
+[dependency-groups]
+# Heavy ML stack used to train, evaluate and export the model. Kept out of
+# the deployed image — install with `uv sync --group train` locally.
+train = [
+    "torch>=2.0.0",
+    "stable-baselines3>=2.1.0",
+    "gymnasium>=0.29.0",
     "shimmy>=0.2.0",
-    "ruff>=0.14.8",
     "wandb>=0.23.1",
     "tqdm>=4.67.1",
     "rich>=14.2.0",
+    "onnx>=1.16.0",
+    "onnxscript>=0.1.0",
+]
+dev = [
+    "ruff>=0.14.8",
 ]
 
 [project.scripts]

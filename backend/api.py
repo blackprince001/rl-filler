@@ -6,16 +6,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import numpy as np
-import torch
 from fastapi import Cookie, FastAPI, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from stable_baselines3 import DQN
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if project_root not in sys.path:
   sys.path.insert(0, project_root)
 
 from backend.core_game import FloodItGame
+from backend.onnx_runner import QValueRunner
 from backend.telemetry import Telemetry, fetch_game, fetch_games, fetch_stats
 
 CLIENT_COOKIE = "rlfiller_client"
@@ -66,35 +65,19 @@ app.add_middleware(
 
 
 # ── Model load ────────────────────────────────────────────────────────────
-device = "cuda" if torch.cuda.is_available() else "cpu"
-if device == "cpu":
-  print("Warning: CUDA not available, using CPU for inference.")
+model_path = Path(__file__).resolve().parent / "models" / "floodit_dqn.onnx"
+if model_path.exists():
+  runner: QValueRunner | None = QValueRunner(model_path)
+  print(f"ONNX model loaded from {model_path}")
 else:
-  print(f"Using device: {device} ({torch.cuda.get_device_name(0)}) for inference")
-
-model_path = os.path.join(os.path.dirname(__file__), "models", "floodit_dqn")
-if os.path.exists(model_path + ".zip"):
-  model = DQN.load(model_path, device=device)
-  if hasattr(model.policy, "q_net"):
-    model.policy.q_net = model.policy.q_net.to(device)
-  print(f"Model loaded from {model_path} on {device}")
-else:
-  print(f"Warning: Model not found at {model_path}. Random fallback only.")
-  model = None
-
-
-def preprocess_board(board):
-  obs = np.zeros((8, 7, 6), dtype=np.uint8)
-  for r in range(8):
-    for c in range(7):
-      obs[r, c, board[r][c]] = 1
-  return obs
+  print(f"Warning: ONNX model not found at {model_path}. Random fallback only.")
+  runner = None
 
 
 # ── HTTP endpoints ────────────────────────────────────────────────────────
 @app.get("/healthz")
 async def healthz():
-  return {"ok": True, "model_loaded": model is not None}
+  return {"ok": True, "model_loaded": runner is not None}
 
 
 def _set_client_cookie(response: Response) -> str:
@@ -202,13 +185,8 @@ def pick_ai_move(game: FloodItGame):
       return False
     return True
 
-  if model is not None:
-    obs = preprocess_board(game.board)
-    obs_tensor = model.policy.obs_to_tensor(obs)[0].to(device)
-    model.policy.q_net.eval()
-    with torch.no_grad():
-      q_values = model.policy.q_net(obs_tensor).cpu().numpy()[0]
-
+  if runner is not None:
+    q_values = runner.q_values(game.board)
     valid_actions = [a for a in range(6) if is_valid(a)]
     valid_q = [float(q_values[a]) for a in valid_actions]
     all_q = [float(q_values[i]) for i in range(6)]
